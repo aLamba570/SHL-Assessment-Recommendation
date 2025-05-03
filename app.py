@@ -5,10 +5,25 @@ from recommendation import SHLRecommendationEngine
 from utils import is_valid_url, format_recommendations_for_display
 import time
 import os
+import importlib
 from dotenv import load_dotenv
+
+# Force reload of the utils module to ensure latest changes are picked up
+import utils
+importlib.reload(utils)
+from utils import is_valid_url, format_recommendations_for_display
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Add deployment detection
+is_deployed = os.environ.get("DEPLOYED", "false").lower() == "true"
+if is_deployed:
+    st.warning("Running in deployed environment. If you see stale data, please refresh the page.")
+    
+# Clear Streamlit cache on startup to ensure fresh data
+st.cache_data.clear()
+st.cache_resource.clear()
 
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -503,7 +518,7 @@ def main():
                         filters["remote_testing"] = remote_testing
                     if adaptive_testing is not None:
                         filters["adaptive_irt"] = adaptive_testing
-                    
+                        
                     # Get basic recommendations
                     basic_recommendations = engine.recommend(query, url=url, max_results=max_results, filters=filters)
                     
