@@ -43,9 +43,6 @@ Creating an intelligent recommendation system that accurately matches job requir
   - Filter selections
   - Recommendation explanation
 
-### 7. Model Persistence
-- **Serialization**: Implemented model serialization for fast loading and deployment.
-- **Versioned Models**: Created a versioning system for models with metadata tracking.
 
 ## Technical Implementation Highlights
 - **Optimized Embeddings**: Used dense, contextual embeddings with 768 dimensions for high-quality semantic matching.
