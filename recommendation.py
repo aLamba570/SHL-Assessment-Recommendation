@@ -167,8 +167,7 @@ class SHLRecommendationEngine:
         if not self.assessments:
             logger.warning("No assessments available to process")
             return
-            
-        self.add_test_case_assessments()
+         
         
         assessment_texts = []
         
