@@ -105,37 +105,7 @@ Get all available assessment types.
   ["Technical", "Cognitive", "Personality", "Behavioral", "Skills"]
   ```
 
-#### 5. Adjust Weights
-Adjust the weights used in the recommendation algorithm.
-
-- **URL**: `/api/adjust_weights`
-- **Method**: `POST`
-- **Request Body**:
-  ```json
-  {
-    "content_weight": 0.6,
-    "skill_weight": 0.2,
-    "type_weight": 0.2
-  }
-  ```
-- **Parameters**:
-  - `content_weight` (float): Weight for content similarity
-  - `skill_weight` (float): Weight for skill matching
-  - `type_weight` (float): Weight for test type matching
-
-- **Response Example**:
-  ```json
-  {
-    "success": true,
-    "current_weights": {
-      "content_weight": 0.6,
-      "skill_weight": 0.2,
-      "type_weight": 0.2
-    }
-  }
-  ```
-
-#### 6. Extract Skills
+#### 5. Extract Skills
 Extract technical skills from provided text.
 
 - **URL**: `/api/extract_skills`
