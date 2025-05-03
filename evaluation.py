@@ -421,7 +421,7 @@ class RecommendationEvaluator:
         content_weights = [0.3, 0.4, 0.5, 0.6, 0.7]
         skill_weights = [0.1, 0.2, 0.3, 0.4]
         
-        best_weights = (0.5, 0.25, 0.25)  # default weights
+        best_weights = (0.5, 0.25, 0.25)  
         best_score = 0.0
         
         results = []
@@ -461,7 +461,6 @@ class RecommendationEvaluator:
         print(f"\nBest weights found: content={cw:.1f}, skill={sw:.1f}, type={tw:.1f}")
         print(f"Best score: {best_score:.3f}")
         
-        # Plot the results
         try:
             df = pd.DataFrame(results)
             pivot_table = df.pivot_table(index='content_weight', columns='skill_weight', values='score')
@@ -585,27 +584,141 @@ class RecommendationEvaluator:
         except Exception as e:
             print(f"Error generating evaluation plots: {e}")
 
+def optimize_weights(engine, test_cases, grid_size=5):
+    """
+    Optimize the weights used for recommendation scoring through grid search
+    
+    Args:
+        engine: The recommendation engine to optimize
+        test_cases: List of test cases for evaluation
+        grid_size: Number of grid points to test for each weight
+        
+    Returns:
+        Best weights as a tuple (content_weight, skill_weight, type_weight)
+    """
+    best_score = 0
+    best_weights = (0.5, 0.25, 0.25)  
+    
+    # Create a finer grid for more comprehensive search
+    grid_points = np.linspace(0.0, 1.0, grid_size)
+    content_weights = np.round(grid_points, 2)
+    
+    results = []
+    
+    # Plot setup
+    plt.figure(figsize=(10, 8))
+    
+    for content_weight in content_weights:
+        for skill_weight in grid_points:
+            # The sum of all weights should be 1.0
+            type_weight = round(1.0 - content_weight - skill_weight, 2)
+            
+            if type_weight < 0:
+                continue  # Skip invalid combinations
+                
+            # Set the weights
+            engine.adjust_weights(content_weight, skill_weight, type_weight)
+            
+            # Evaluate with these weights
+            overall_score = evaluate_test_cases(engine, test_cases, print_metrics=False)
+            
+            results.append((content_weight, skill_weight, type_weight, overall_score))
+            
+            print(f"  Weights (content={content_weight}, skill={skill_weight}, type={type_weight}): score = {overall_score:.3f}")
+            
+            if overall_score > best_score:
+                best_score = overall_score
+                best_weights = (content_weight, skill_weight, type_weight)
+    
+    print(f"Best weights found: content={best_weights[0]}, skill={best_weights[1]}, type={best_weights[2]}")
+    print(f"Best score: {best_score:.3f}")
+    
+    # Convert results to arrays for visualization
+    results_array = np.array(results)
+    
+    # Create a mesh grid for content_weight and skill_weight
+    content_mesh = []
+    skill_mesh = []
+    scores_mesh = []
+    
+    for cw in np.unique(results_array[:, 0]):
+        for sw in np.unique(results_array[:, 1]):
+            mask = (results_array[:, 0] == cw) & (results_array[:, 1] == sw)
+            if any(mask):
+                score = results_array[mask, 3][0]
+                content_mesh.append(cw)
+                skill_mesh.append(sw)
+                scores_mesh.append(score)
+    
+    # Convert to numpy arrays
+    content_mesh = np.array(content_mesh)
+    skill_mesh = np.array(skill_mesh)
+    scores_mesh = np.array(scores_mesh)
+    
+    # Create a pivot table for heatmap
+    pivot_table = np.zeros((grid_size, grid_size))
+    pivot_table[:] = np.nan  # Fill with NaN for invalid combinations
+    
+    for cw, sw, score in zip(content_mesh, skill_mesh, scores_mesh):
+        i = int(cw * (grid_size - 1))
+        j = int(sw * (grid_size - 1))
+        if i < grid_size and j < grid_size and i >= 0 and j >= 0:
+            pivot_table[i, j] = score
+    
+    # Plot heatmap
+    heatmap = plt.pcolormesh(pivot_table, cmap='viridis')
+    plt.colorbar(heatmap)
+    
+    # Add axis labels and ticks
+    plt.xticks(np.arange(0.5, grid_size, 1), [f"{x:.1f}" for x in np.linspace(0, 1, grid_size)])
+    plt.yticks(np.arange(0.5, grid_size, 1), [f"{x:.1f}" for x in np.linspace(0, 1, grid_size)])
+    plt.xlabel("Skill Weight")
+    plt.ylabel("Content Weight")
+    plt.title("Weight Optimization Heatmap")
+    
+    # Add annotations for the best weights
+    best_i = int(best_weights[0] * (grid_size - 1))
+    best_j = int(best_weights[1] * (grid_size - 1))
+    if best_i < grid_size and best_j < grid_size and best_i >= 0 and best_j >= 0:
+        plt.plot(best_j + 0.5, best_i + 0.5, 'r*', markersize=15)
+        plt.annotate(f"Best: {best_score:.3f}", 
+                     (best_j + 0.5, best_i + 0.5), 
+                     xytext=(best_j + 1, best_i + 1),
+                     arrowprops=dict(facecolor='black', shrink=0.05))
+    
+    # Save the plot
+    plt.savefig('weight_optimization.png')
+    
+    return best_weights
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate SHL recommendation engine")
     parser.add_argument("--optimize", action="store_true", help="Optimize recommendation weights")
     parser.add_argument("--num-recs", type=int, default=5, help="Number of recommendations to evaluate")
     parser.add_argument("--plot", action="store_true", help="Generate evaluation plots")
     parser.add_argument("--k-values", type=str, default="3,5,10", help="Comma-separated K values for Recall@K and MAP@K")
+    parser.add_argument("--verbose", action="store_true", help="Display verbose output")
     args = parser.parse_args()
+    
+    print("Initializing the SHL Recommendation Evaluator...")
     
     # Initialize evaluator
     evaluator = RecommendationEvaluator()
     
-    # Run weight optimization if requested
-    if args.optimize:
-        evaluator.weight_optimization()
+    print("Optimizing recommendation weights to improve performance...")
+    best_weights = evaluator.weight_optimization()
     
     # Run evaluation
-    evaluator.run_evaluation(num_recommendations=args.num_recs)
+    print("\nRunning full evaluation with optimized weights...")
+    metrics = evaluator.run_evaluation(num_recommendations=args.num_recs)
     
-    # Generate plots if requested
-    if args.plot:
+    if args.plot or True: 
+        print("Generating evaluation plots...")
         evaluator.plot_evaluation_results()
+        
+    print("\nEvaluation complete. Check the generated plots for detailed performance metrics.")
+    
+    return metrics
 
 if __name__ == "__main__":
     main()
