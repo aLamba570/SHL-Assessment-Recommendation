@@ -64,7 +64,6 @@ def print_recommendations(recommendations):
         print()
 
 def format_recommendations_for_api(recommendations):
-    """Format recommendations for API response"""
     return [
         {
             "name": rec.get("name", ""),
