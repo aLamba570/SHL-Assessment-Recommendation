@@ -22,7 +22,6 @@ class SHLScraper:
         self.request_delay = 3  
     
     def setup_driver(self):
-        print("Setting up undetected ChromeDriver...")
         try:
             options = uc.ChromeOptions()
             options.add_argument('--headless')
@@ -32,11 +31,9 @@ class SHLScraper:
             options.add_argument('--disable-dev-shm-usage')
             
             driver = uc.Chrome(options=options)
-            print("Successfully set up undetected ChromeDriver")
             return driver
         except Exception as e:
-            print(f"Error setting up undetected ChromeDriver: {str(e)}")
-            print("Falling back to regular ChromeDriver...")
+            print(str(e))
             
             try:
                 chrome_options = Options()
