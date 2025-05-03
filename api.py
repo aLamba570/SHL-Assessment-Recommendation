@@ -123,6 +123,38 @@ def get_assessment_types():
             "error": f"Error processing request: {str(e)}"
         }), 500
 
+@app.route('/api/adjust_weights', methods=['POST'])
+def adjust_weights():
+    """Adjust recommendation engine weights"""
+    data = request.json
+    
+    if not data:
+        return jsonify({
+            "error": "Missing parameters. Please provide weights to adjust."
+        }), 400
+    
+    # Extract weights from request
+    content_weight = data.get('content_weight', None)
+    skill_weight = data.get('skill_weight', None)
+    type_weight = data.get('type_weight', None)
+    
+    try:
+        # Adjust weights
+        engine.adjust_weights(content_weight, skill_weight, type_weight)
+        
+        return jsonify({
+            "success": True,
+            "current_weights": {
+                "content_weight": engine.content_weight,
+                "skill_weight": engine.skill_weight,
+                "type_weight": engine.type_weight
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error adjusting weights: {str(e)}")
+        return jsonify({
+            "error": f"Error processing request: {str(e)}"
+        }), 500
 
 @app.route('/api/extract_skills', methods=['POST'])
 def extract_skills():
@@ -134,9 +166,11 @@ def extract_skills():
             "error": "Missing required parameter 'text'."
         }), 400
     
+    # Extract text from request
     text = data['text']
     
     try:
+        # Extract skills
         skills = engine.extract_skills_from_query(text)
         
         return jsonify({
@@ -149,5 +183,6 @@ def extract_skills():
         }), 500
 
 if __name__ == '__main__':
+    # Start the API server
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)

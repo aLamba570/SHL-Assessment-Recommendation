@@ -1,10 +1,13 @@
 import streamlit as st
 import json
+import requests
 from recommendation import SHLRecommendationEngine
 from utils import is_valid_url, format_recommendations_for_display
+import time
 import os
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
 import google.generativeai as genai
@@ -15,37 +18,45 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.chains import RetrievalQA
+from langchain_core.messages import HumanMessage, SystemMessage
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from evaluation import RecommendationEvaluator
 
+# Set page title and favicon
 st.set_page_config(
     page_title="SHL Assessment Recommendation System",
     page_icon="📋",
     layout="wide"
 )
 
+# Initialize Gemini API with environment variable
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     st.warning("GOOGLE_API_KEY not found in environment variables. Please add it to your .env file. Some features may not work.")
 else:
     genai.configure(api_key=GOOGLE_API_KEY)
 
+# Initialize or load recommendation engine
 @st.cache_resource
 def load_recommendation_engine():
     try:
+        # First try to load the latest trained model if available
         from models.inference import get_available_models
         from models.model import SHLRecommendationModel
         
         models = get_available_models()
         if models:
+            # Sort by creation time (assuming the timestamp is in the name)
             models.sort(reverse=True)
             model_path = os.path.join("models", models[0])
             st.success(f"Using saved model: {models[0]}")
             model = SHLRecommendationModel.load(model_path)
-            return model.engine
+            return model.engine  # Return the engine for compatibility
         
+        # Fall back to creating a new engine directly
         st.info("No saved model found. Creating a new recommendation engine.")
         engine = SHLRecommendationEngine()
         return engine
@@ -53,12 +64,15 @@ def load_recommendation_engine():
         st.error(f"Error initializing recommendation engine: {e}")
         return None
 
+# Initialize or load RAG system
 @st.cache_resource
 def initialize_rag_system():
     try:
+        # Load assessment data
         with open("data/assessments.json", "r") as f:
             assessments = json.load(f)
         
+        # Create documents from assessments
         documents = []
         for assessment in assessments:
             content = (
@@ -72,12 +86,15 @@ def initialize_rag_system():
             )
             documents.append({"content": content, "metadata": {"name": assessment['name'], "url": assessment.get('url', '#')}})
         
+        # Split documents
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         texts = text_splitter.create_documents([doc["content"] for doc in documents], metadatas=[doc["metadata"] for doc in documents])
         
+        # Create vector store
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
         vectorstore = FAISS.from_documents(texts, embeddings)
         
+        # Create retriever
         retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
         
         return retriever
@@ -85,10 +102,11 @@ def initialize_rag_system():
         st.error(f"Error initializing RAG system: {e}")
         return None
 
+# Load evaluation metrics
 @st.cache_data
 def load_evaluation_metrics():
     try:
-        import os
+        # Create an evaluator and run evaluation to get metrics
         engine = load_recommendation_engine()
         if engine:
             evaluator = RecommendationEvaluator(engine=engine)
@@ -99,14 +117,16 @@ def load_evaluation_metrics():
         st.error(f"Error loading evaluation metrics: {str(e)}")
         return None
 
+# Initialize LLM for enhanced recommendations
 @st.cache_resource
 def initialize_llm():
     try:
         if not GOOGLE_API_KEY:
             return None
             
+        # Updated to use the correct model name format
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-pro",
+            model="gemini-1.5-pro",  # Updated from gemini-pro to gemini-1.5-pro
             temperature=0.1,
             google_api_key=GOOGLE_API_KEY,
             convert_system_message_to_human=True
@@ -117,10 +137,12 @@ def initialize_llm():
         return None
 
 def generate_enhanced_recommendations(query, basic_recommendations, retriever, llm):
+    """Generate enhanced recommendations using RAG and GenAI"""
     if not llm or not retriever:
         return basic_recommendations, None
         
     try:
+        # Create a template for the LLM to follow
         template = """
         You are a specialized AI assistant for SHL assessments and testing solutions. Your task is to recommend the best SHL assessments based on the user's query or job description.
         
@@ -153,13 +175,17 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
         </constraints>
         """
         
+        # Retrieve context from RAG system
         retrieved_docs = retriever.get_relevant_documents(query)
         context = "\n\n".join([doc.page_content for doc in retrieved_docs])
         
+        # Format basic recommendations for LLM
         basic_recs_text = "\n".join([f"- {rec['name']} ({', '.join(rec.get('test_type', ['Unknown']))}, Duration: {rec.get('duration', 'Unknown')}, Remote: {'Yes' if rec.get('remote_testing', False) else 'No'})" for rec in basic_recommendations])
         
+        # Create prompt
         prompt = ChatPromptTemplate.from_template(template)
         
+        # Create chain
         chain = (
             {"query": RunnablePassthrough(), "context": lambda x: context, "basic_recommendations": lambda x: basic_recs_text}
             | prompt
@@ -167,8 +193,10 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
             | StrOutputParser()
         )
         
+        # Run chain
         response = chain.invoke(query)
         
+        # Parse the response to extract the sections
         analysis = ""
         recommendations_text = ""
         constraints = ""
@@ -182,6 +210,7 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
         if "<constraints>" in response and "</constraints>" in response:
             constraints = response.split("<constraints>")[1].split("</constraints>")[0].strip()
         
+        # Create a combined insights object
         insights = {
             "analysis": analysis,
             "recommendations_explanation": recommendations_text,
@@ -195,10 +224,12 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
         return basic_recommendations, None
 
 def display_recommendations(recommendations, insights=None):
+    """Display recommendations in a formatted table with enhanced insights"""
     if not recommendations:
         st.warning("No relevant assessments found. Please try a different query.")
         return
     
+    # Display insights if available
     if insights:
         with st.container():
             st.markdown("### Analysis")
@@ -211,8 +242,10 @@ def display_recommendations(recommendations, insights=None):
     
     st.success(f"Found {len(recommendations)} relevant assessments")
     
+    # Create table
     df = pd.DataFrame(recommendations)
     
+    # Reorder and rename columns for better display
     cols_to_show = ['name', 'remote_testing', 'adaptive_irt', 'duration', 'test_type']
     renamed_cols = {
         'name': 'Assessment Name', 
@@ -222,47 +255,69 @@ def display_recommendations(recommendations, insights=None):
         'test_type': 'Test Type'
     }
     
+    # Make sure all required columns exist
     for col in cols_to_show:
         if col not in df.columns:
             df[col] = "N/A"
     
+    # Create subset with only the columns we want to show
     df_display = df[cols_to_show].rename(columns=renamed_cols)
     
+    # Create clickable links for assessment names
     df_display['Assessment Name'] = df.apply(
         lambda x: f"<a href='{x.get('url', '#')}' target='_blank'>{x['name']}</a>", 
         axis=1
     )
     
+    # Display the dataframe with clickable links
     st.write(df_display.to_html(escape=False, index=False), unsafe_allow_html=True)
     
+    # Explanation section with more details
     if insights and insights.get("recommendations_explanation"):
         with st.expander("Why these assessments were recommended", expanded=True):
             st.markdown(insights["recommendations_explanation"])
 
 def display_system_evaluation():
+    """Display system evaluation metrics and interpretation"""
     st.markdown("## System Performance Metrics")
     
+    metrics = load_evaluation_metrics()
+    if not metrics:
+        st.warning("Evaluation metrics are not available.")
+        return
+        
+    # Create two columns for metrics display
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("### Relevance Metrics")
         
-        # Updated metric values based on the latest evaluation
+        # Create a metrics dataframe
         metrics_data = {
             "Metric": ["Type Relevance", "Keyword Relevance", "Constraint Satisfaction", "Overall Score"],
-            "Value": ["0.85", "0.41", "1.00", "0.70"],
+            "Value": [
+                f"{metrics['avg_type_relevance']:.2f}",
+                f"{metrics['avg_keyword_relevance']:.2f}",
+                f"{metrics['avg_constraint_satisfaction']:.2f}",
+                f"{metrics['avg_overall_score']:.2f}"
+            ],
             "Interpretation": [
-                "High", "Moderate", "High", "High"
+                "Low" if metrics['avg_type_relevance'] < 0.3 else ("Moderate" if metrics['avg_type_relevance'] < 0.7 else "High"),
+                "Low" if metrics['avg_keyword_relevance'] < 0.3 else ("Moderate" if metrics['avg_keyword_relevance'] < 0.7 else "High"),
+                "Low" if metrics['avg_constraint_satisfaction'] < 0.3 else ("Moderate" if metrics['avg_constraint_satisfaction'] < 0.7 else "High"),
+                "Low" if metrics['avg_overall_score'] < 0.3 else ("Moderate" if metrics['avg_overall_score'] < 0.7 else "High")
             ]
         }
         
+        # Display metrics table
         st.table(pd.DataFrame(metrics_data))
         
-        # Generate a new plot based on the updated metrics
+        # Create and display bar chart
         fig, ax = plt.subplots(figsize=(10, 6))
         bars = ax.bar(metrics_data["Metric"], [float(x) for x in metrics_data["Value"]])
         
-        colors = ['#99ff99' if x == "High" else '#ffcc99' if x == "Moderate" else '#ff9999' for x in metrics_data["Interpretation"]]
+        # Color the bars based on interpretation
+        colors = ['#ff9999' if x == "Low" else '#ffcc99' if x == "Moderate" else '#99ff99' for x in metrics_data["Interpretation"]]
         for bar, color in zip(bars, colors):
             bar.set_color(color)
             
@@ -270,137 +325,86 @@ def display_system_evaluation():
         ax.set_xlabel('Metric')
         ax.set_ylabel('Score (0-1)')
         ax.set_title('Recommendation System Relevance Metrics')
-        
-        # Add value labels on top of each bar
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.02,
-                    f'{height:.2f}', ha='center', va='bottom', fontweight='bold')
-            
         plt.xticks(rotation=45)
         plt.tight_layout()
         
+        # Display the plot
         st.pyplot(fig)
     
     with col2:
         st.markdown("### Ranking Metrics")
         
-        # Updated ranking metric values based on the latest evaluation
+        # Extract K values and corresponding metrics
+        k_values = sorted(list(metrics["mean_recall_at_k"].keys()))
+        mean_recall = [metrics["mean_recall_at_k"][k] for k in k_values]
+        mean_ap = [metrics["mean_ap_at_k"][k] for k in k_values]
+        
+        # Create ranking metrics dataframe
         ranking_data = {
-            "K Value": [3, 5, 10],
-            "Mean Recall@K": ["0.71", "1.04", "1.29"],
-            "MAP@K": ["0.95", "1.02", "1.18"],
-            "Interpretation": ["High", "High", "High"]
+            "K Value": k_values,
+            "Mean Recall@K": [f"{val:.2f}" for val in mean_recall],
+            "MAP@K": [f"{val:.2f}" for val in mean_ap],
+            "Interpretation": [
+                "Low" if (mean_recall[i] < 0.3 and mean_ap[i] < 0.3) 
+                else ("Moderate" if (mean_recall[i] < 0.7 or mean_ap[i] < 0.7) else "High")
+                for i in range(len(k_values))
+            ]
         }
         
+        # Display ranking metrics table
         st.table(pd.DataFrame(ranking_data))
         
-        # Generate a new plot based on the updated metrics
+        # Create and display bar chart for ranking metrics
         fig, ax = plt.subplots(figsize=(10, 6))
         
-        x = np.arange(len(ranking_data["K Value"]))
+        x = np.arange(len(k_values))
         width = 0.35
         
-        recall_values = [float(val) for val in ranking_data["Mean Recall@K"]]
-        map_values = [float(val) for val in ranking_data["MAP@K"]]
+        # Plot bars
+        recall_bars = ax.bar(x - width/2, mean_recall, width, label='Mean Recall@K')
+        map_bars = ax.bar(x + width/2, mean_ap, width, label='MAP@K')
         
-        recall_bars = ax.bar(x - width/2, recall_values, width, label='Mean Recall@K')
-        map_bars = ax.bar(x + width/2, map_values, width, label='MAP@K')
+        # Color bars based on values
+        recall_colors = ['#ff9999' if val < 0.3 else '#ffcc99' if val < 0.7 else '#99ff99' for val in mean_recall]
+        map_colors = ['#ff9999' if val < 0.3 else '#ffcc99' if val < 0.7 else '#99ff99' for val in mean_ap]
         
-        # Use consistent colors for high performance metrics
-        for bar in recall_bars:
-            bar.set_color('#99ff99')  # Green for high performance
+        for bar, color in zip(recall_bars, recall_colors):
+            bar.set_color(color)
             
-        for bar in map_bars:
-            bar.set_color('#66ccff')  # Blue for high performance
+        for bar, color in zip(map_bars, map_colors):
+            bar.set_color(color)
         
-        # Add value labels on top of each bar
-        for i, bar in enumerate(recall_bars):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.05,
-                    f'{recall_values[i]:.2f}', ha='center', va='bottom', fontweight='bold')
-        
-        for i, bar in enumerate(map_bars):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.05,
-                    f'{map_values[i]:.2f}', ha='center', va='bottom', fontweight='bold')
-        
-        y_max = max(max(recall_values), max(map_values)) * 1.15  # Leave space for labels
-        ax.set_ylim(0, y_max)
+        ax.set_ylim(0, 1.0)
         ax.set_xlabel('K Value')
-        ax.set_ylabel('Score')
+        ax.set_ylabel('Score (0-1)')
         ax.set_title('Recommendation System Ranking Metrics')
         ax.set_xticks(x)
-        ax.set_xticklabels(ranking_data["K Value"])
+        ax.set_xticklabels(k_values)
         ax.legend()
         
         plt.tight_layout()
         
+        # Display the plot
         st.pyplot(fig)
-    
-    # Generate a weight optimization heatmap visualization
-    st.markdown("### Weight Optimization Analysis")
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Create a sample heatmap based on our optimization results
-    # We know the optimal weights are content=0.3, skill=0.1, type=0.6
-    grid_size = 5
-    weights_grid = np.zeros((grid_size, grid_size))
-    
-    # Fill with sample values that peak at our optimal weights
-    for i in range(grid_size):
-        for j in range(grid_size):
-            content_weight = i / (grid_size - 1)
-            skill_weight = j / (grid_size - 1)
-            # Distance from optimal weights
-            dist_from_optimal = ((content_weight - 0.3)**2 + (skill_weight - 0.1)**2) ** 0.5
-            weights_grid[i, j] = max(0.5, 1 - dist_from_optimal)  # Higher values near optimal point
-    
-    # Plot heatmap
-    heatmap = ax.pcolormesh(weights_grid, cmap='viridis')
-    plt.colorbar(heatmap)
-    
-    # Add axis labels and ticks
-    plt.xticks(np.arange(0.5, grid_size, 1), [f"{x:.1f}" for x in np.linspace(0, 1, grid_size)])
-    plt.yticks(np.arange(0.5, grid_size, 1), [f"{x:.1f}" for x in np.linspace(0, 1, grid_size)])
-    plt.xlabel("Skill Weight")
-    plt.ylabel("Content Weight")
-    plt.title("Weight Optimization Heatmap")
-    
-    # Mark the optimal point
-    optimal_content = 0.3
-    optimal_skill = 0.1
-    optimal_i = int(optimal_content * (grid_size - 1))
-    optimal_j = int(optimal_skill * (grid_size - 1))
-    plt.plot(optimal_j + 0.5, optimal_i + 0.5, 'r*', markersize=15)
-    plt.annotate(f"Best: 0.70", 
-                 (optimal_j + 0.5, optimal_i + 0.5), 
-                 xytext=(optimal_j + 1, optimal_i + 1),
-                 arrowprops=dict(facecolor='black', shrink=0.05))
-    
-    plt.tight_layout()
-    st.pyplot(fig)
-    
-    st.markdown("The heatmap shows the optimization of weights for content similarity, skill matching, and test type matching. The star indicates the best performing configuration: content=0.3, skill=0.1, type=0.6.")
     
     st.markdown("### Interpretation of Evaluation Results")
     st.info("""
     **Current System Performance Summary:**
     
-    The recommendation system is performing well, with most metrics showing high performance:
+    The recommendation system is currently performing at a suboptimal level, with most metrics showing low to moderate performance:
     
-    - **Type Relevance (0.85)**: The system successfully matches query intent with appropriate assessment types
-    - **Keyword Relevance (0.41)**: The system effectively detects and matches relevant keywords
-    - **Constraint Satisfaction (1.00)**: The system perfectly respects constraints like remote testing and duration
-    - **Overall Score (0.70)**: The system provides highly relevant recommendations overall
-    - **Mean Recall@K**: The system efficiently retrieves relevant assessments at different K values (0.71, 1.04, 1.29)
-    - **MAP@K**: The system effectively ranks relevant assessments (0.95, 1.02, 1.18)
+    - **Type Relevance (0.74)**: The system struggles to match query intent with appropriate assessment types
+    - **Keyword Relevance (0.21)**: The system needs improvement in detecting and matching relevant keywords
+    - **Constraint Satisfaction (0.91)**: The system is moderately effective at respecting constraints like remote testing and duration
+    - **Mean Recall@K**: The system retrieves only a small portion of relevant assessments at different K values
+    - **MAP@K**: The system needs improvement in both retrieving relevant assessments and ranking them appropriately
     
-    The optimized weight configuration (content=0.3, skill=0.1, type=0.6) significantly improves recommendation quality.
-    Technical roles like Java developers, frontend developers, and DevOps engineers show especially strong performance.
+    
+    The RAG and GenAI components help mitigate some of these limitations by providing additional context and explanations.
     """)
 
 def main():
+    # Header
     st.title("SHL Assessment Recommendation System with RAG and GenAI")
     st.markdown("""
     This system uses Retrieval-Augmented Generation and Generative AI to recommend SHL assessments 
@@ -409,6 +413,7 @@ def main():
     Enter your query or job description below, or provide a URL to a job description.
     """)
     
+    # Sidebar information
     with st.sidebar:
         st.header("About")
         st.markdown("""
@@ -437,6 +442,7 @@ def main():
         st.header("Navigation")
         page = st.radio("Go to", ["Recommendation Engine", "System Evaluation"])
     
+    # Load systems
     engine = load_recommendation_engine()
     retriever = initialize_rag_system()
     llm = initialize_llm()
@@ -445,21 +451,26 @@ def main():
         st.error("Failed to initialize recommendation engine. Please check logs for more details.")
         return
     
+    # Show selected page
     page = st.sidebar.radio("Select Page", ["Recommendation Engine", "System Evaluation"])
     
     if page == "Recommendation Engine":
+        # Input form
         with st.form("query_form"):
+            # Text input
             query = st.text_area(
                 "Enter your query or job description", 
                 height=150,
                 placeholder="E.g., 'Looking for technical assessment for Java developers that can be completed in 30 minutes'"
             )
             
+            # URL input
             url = st.text_input(
                 "Or enter a job description URL (optional)",
                 placeholder="https://example.com/job-description"
             )
             
+            # Advanced options
             with st.expander("Advanced Options"):
                 use_rag = st.checkbox("Use RAG and GenAI for enhanced recommendations", value=True)
                 max_results = st.slider("Maximum number of recommendations", min_value=1, max_value=20, value=10)
@@ -470,8 +481,10 @@ def main():
                 with col2:
                     adaptive_testing = st.radio("Adaptive/IRT Testing", [None, True, False], format_func=lambda x: "Any" if x is None else ("Yes" if x else "No"))
             
+            # Submit button
             submit = st.form_submit_button("Get Recommendations")
         
+        # Process form submission
         if submit:
             if not query and not url:
                 st.warning("Please provide either a query or a URL.")
@@ -481,16 +494,20 @@ def main():
                 st.warning("Please enter a valid URL.")
                 return
                 
+            # Show spinner while processing
             with st.spinner("Processing your request..."):
                 try:
+                    # Create filters from advanced options
                     filters = {}
                     if remote_testing is not None:
                         filters["remote_testing"] = remote_testing
                     if adaptive_testing is not None:
                         filters["adaptive_irt"] = adaptive_testing
                     
+                    # Get basic recommendations
                     basic_recommendations = engine.recommend(query, url=url, max_results=max_results, filters=filters)
                     
+                    # Use RAG and GenAI for enhanced recommendations if enabled
                     recommendations = basic_recommendations
                     insights = None
                     
@@ -498,13 +515,16 @@ def main():
                         st.info("Enhancing recommendations with Generative AI...")
                         recommendations, insights = generate_enhanced_recommendations(query, basic_recommendations, retriever, llm)
                     
+                    # Format recommendations for display
                     formatted_recs = format_recommendations_for_display(recommendations)
                     
+                    # Display recommendations
                     display_recommendations(formatted_recs, insights)
                     
                 except Exception as e:
                     st.error(f"Error getting recommendations: {str(e)}")
                     
+        # Show performance disclaimer
         st.info("""
         **Note**: Our recommendation engine is continuously learning and improving. 
         For detailed information about the system's performance metrics and limitations, 
@@ -514,6 +534,7 @@ def main():
     elif page == "System Evaluation":
         display_system_evaluation()
     
+    # Footer
     st.markdown("---")
     st.markdown("© 2025 SHL Assessment Recommendation System")
 
