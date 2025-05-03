@@ -1,0 +1,28 @@
+# my_recommendation_model
+
+Version: 1.0.0
+Created: 2025-05-03T14:05:17.941565
+Embedding Model: all-mpnet-base-v2
+
+## Performance Metrics
+
+- avg_type_relevance: 0.7357142857142857
+- avg_keyword_relevance: 0.21428571428571427
+- avg_constraint_satisfaction: 0.9142857142857144
+- avg_overall_score: 0.5628571428571428
+### mean_recall_at_k:
+- 3: 0.7142857142857143
+- 5: 1.0714285714285714
+- 10: 1.3214285714285714
+### mean_ap_at_k:
+- 3: 0.9523809523809524
+- 5: 1.0714285714285714
+- 10: 1.2560090702947844
+### query_results:
+- I am hiring for Java developers who can also collaborate effectively with my business teams. Looking for an assessment(s) that can be completed in 40 minutes.: {'type_relevance': 0.4, 'keyword_relevance': 0.375, 'constraint_satisfaction': 0.4, 'overall_score': 0.39000000000000007, 'num_recommendations': 10, 'top_recommendation': 'Java Coding Assessment', 'recall_at_3': 0.75, 'ap_at_3': 1.0, 'recall_at_5': 1.0, 'ap_at_5': 1.0, 'recall_at_10': 1.0, 'ap_at_10': 1.0}
+- Python data scientist with machine learning expertise: {'type_relevance': 0.7, 'keyword_relevance': 0.15, 'constraint_satisfaction': 1.0, 'overall_score': 0.54, 'num_recommendations': 10, 'top_recommendation': 'Data Science Assessment', 'recall_at_3': 0.75, 'ap_at_3': 1.0, 'recall_at_5': 1.25, 'ap_at_5': 1.25, 'recall_at_10': 1.5, 'ap_at_10': 1.4375}
+- Sales manager with leadership skills, need personality assessment: {'type_relevance': 0.7, 'keyword_relevance': 0.2333333333333333, 'constraint_satisfaction': 1.0, 'overall_score': 0.5733333333333333, 'num_recommendations': 10, 'top_recommendation': 'Leadership and Management Assessment', 'recall_at_3': 0.75, 'ap_at_3': 1.0, 'recall_at_5': 1.25, 'ap_at_5': 1.25, 'recall_at_10': 1.75, 'ap_at_10': 1.6587301587301586}
+- Frontend developer with React and Angular experience: {'type_relevance': 1.0, 'keyword_relevance': 0.15, 'constraint_satisfaction': 1.0, 'overall_score': 0.66, 'num_recommendations': 10, 'top_recommendation': 'Frontend Development Assessment', 'recall_at_3': 0.75, 'ap_at_3': 1.0, 'recall_at_5': 1.0, 'ap_at_5': 1.0, 'recall_at_10': 1.0, 'ap_at_10': 1.0}
+- Project manager with agile experience, test should be under 30 minutes: {'type_relevance': 0.65, 'keyword_relevance': 0.2333333333333333, 'constraint_satisfaction': 1.0, 'overall_score': 0.5533333333333333, 'num_recommendations': 10, 'top_recommendation': 'Agile Methodologies Test', 'recall_at_3': 0.5, 'ap_at_3': 0.6666666666666666, 'recall_at_5': 0.5, 'ap_at_5': 0.5, 'recall_at_10': 0.75, 'ap_at_10': 0.5833333333333334}
+- Customer service representative assessment, must be remote testing: {'type_relevance': 0.7, 'keyword_relevance': 0.2333333333333333, 'constraint_satisfaction': 1.0, 'overall_score': 0.5733333333333333, 'num_recommendations': 10, 'top_recommendation': 'Customer Service Assessment', 'recall_at_3': 0.75, 'ap_at_3': 1.0, 'recall_at_5': 1.25, 'ap_at_5': 1.25, 'recall_at_10': 1.5, 'ap_at_10': 1.5}
+- DevOps engineer with AWS and Kubernetes experience: {'type_relevance': 1.0, 'keyword_relevance': 0.125, 'constraint_satisfaction': 1.0, 'overall_score': 0.65, 'num_recommendations': 10, 'top_recommendation': 'DevOps Skills Assessment', 'recall_at_3': 0.75, 'ap_at_3': 1.0, 'recall_at_5': 1.25, 'ap_at_5': 1.25, 'recall_at_10': 1.75, 'ap_at_10': 1.6125}
