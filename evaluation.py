@@ -20,7 +20,6 @@ class RecommendationEvaluator:
             except Exception:
                 pass
         
-        # Default test queries if file doesn't exist
         return [
             {
                 "query": "Java developers with collaboration skills, 40 min assessment",
