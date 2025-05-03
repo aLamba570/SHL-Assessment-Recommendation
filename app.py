@@ -88,6 +88,7 @@ def initialize_rag_system():
 @st.cache_data
 def load_evaluation_metrics():
     try:
+        import os
         engine = load_recommendation_engine()
         if engine:
             evaluator = RecommendationEvaluator(engine=engine)
