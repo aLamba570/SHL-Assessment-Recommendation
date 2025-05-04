@@ -6,17 +6,27 @@ from utils import is_valid_url, format_recommendations_for_display
 import time
 import os
 import importlib
+import sys
 from dotenv import load_dotenv
-import utils
-importlib.reload(utils)
-from utils import is_valid_url, format_recommendations_for_display
+
+UTILS_VERSION = "1.0.1"  
+if "utils_version" not in st.session_state or st.session_state.utils_version != UTILS_VERSION:
+    if "utils" in sys.modules:
+        del sys.modules["utils"]
+    import utils
+    importlib.reload(utils)
+    from utils import is_valid_url, format_recommendations_for_display
+    st.session_state.utils_version = UTILS_VERSION
+    st.session_state.pop("recommendation_engine", None)  
+    st.session_state.pop("rag_system", None)  
+    st.session_state.pop("evaluation_metrics", None) 
+    st.session_state.pop("llm", None)  
 
 load_dotenv()
 
-
 is_deployed = os.environ.get("DEPLOYED", "false").lower() == "true"
 if is_deployed:
-    st.warning("Running in deployed environment. If you see stale data, please refresh the page.")
+    st.warning("Running in deployed environment. If you see stale data, please refresh the page or click the Reset button.")
 
 if "cleared_cache" not in st.session_state:
     st.cache_data.clear()
