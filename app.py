@@ -7,24 +7,23 @@ import time
 import os
 import importlib
 from dotenv import load_dotenv
-
-# Force reload of the utils module to ensure latest changes are picked up
 import utils
 importlib.reload(utils)
 from utils import is_valid_url, format_recommendations_for_display
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Add deployment detection
+
 is_deployed = os.environ.get("DEPLOYED", "false").lower() == "true"
 if is_deployed:
     st.warning("Running in deployed environment. If you see stale data, please refresh the page.")
-    
-# Clear Streamlit cache on startup to ensure fresh data
-st.cache_data.clear()
-st.cache_resource.clear()
 
+if "cleared_cache" not in st.session_state:
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.session_state.cleared_cache = True
+
+import gc
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.runnables import RunnablePassthrough
@@ -40,124 +39,125 @@ import matplotlib.pyplot as plt
 import numpy as np
 from evaluation import RecommendationEvaluator
 
-# Set page title and favicon
 st.set_page_config(
     page_title="SHL Assessment Recommendation System",
     page_icon="📋",
     layout="wide"
 )
 
-# Initialize Gemini API with environment variable
+
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     st.warning("GOOGLE_API_KEY not found in environment variables. Please add it to your .env file. Some features may not work.")
 else:
     genai.configure(api_key=GOOGLE_API_KEY)
 
-# Initialize or load recommendation engine
-@st.cache_resource
+def clear_unused_resources():
+    gc.collect()
+
 def load_recommendation_engine():
-    try:
-        # First try to load the latest trained model if available
-        from models.inference import get_available_models
-        from models.model import SHLRecommendationModel
-        
-        models = get_available_models()
-        if models:
-            # Sort by creation time (assuming the timestamp is in the name)
-            models.sort(reverse=True)
-            model_path = os.path.join("models", models[0])
-            st.success(f"Using saved model: {models[0]}")
-            model = SHLRecommendationModel.load(model_path)
-            return model.engine  # Return the engine for compatibility
-        
-        # Fall back to creating a new engine directly
-        st.info("No saved model found. Creating a new recommendation engine.")
-        engine = SHLRecommendationEngine()
-        return engine
-    except Exception as e:
-        st.error(f"Error initializing recommendation engine: {e}")
-        return None
+    """Initialize the SHL recommendation engine or retrieve it from session state"""
+    if "recommendation_engine" not in st.session_state:
+        with st.spinner("Initializing recommendation engine..."):
+            try:
+                engine = SHLRecommendationEngine(
+                    assessments_file="data/assessments.json",
+                    model_name="all-mpnet-base-v2"
+                )
+                st.session_state.recommendation_engine = engine
+                st.success("Recommendation engine initialized successfully")
+            except Exception as e:
+                st.error(f"Error initializing recommendation engine: {e}")
+                return None
+    
+    return st.session_state.recommendation_engine
 
-# Initialize or load RAG system
-@st.cache_resource
 def initialize_rag_system():
-    try:
-        # Load assessment data
-        with open("data/assessments.json", "r") as f:
-            assessments = json.load(f)
-        
-        # Create documents from assessments
-        documents = []
-        for assessment in assessments:
-            content = (
-                f"Assessment: {assessment['name']}\n"
-                f"Description: {assessment.get('description', 'No description available')}\n"
-                f"Test Types: {', '.join(assessment.get('test_type', ['Unknown']))}\n"
-                f"Duration: {assessment.get('duration', 'Unknown')}\n"
-                f"Remote Testing: {'Yes' if assessment.get('remote_testing', False) else 'No'}\n"
-                f"Adaptive/IRT Testing: {'Yes' if assessment.get('adaptive_irt', False) else 'No'}\n"
-                f"URL: {assessment.get('url', '#')}\n"
-            )
-            documents.append({"content": content, "metadata": {"name": assessment['name'], "url": assessment.get('url', '#')}})
-        
-        # Split documents
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        texts = text_splitter.create_documents([doc["content"] for doc in documents], metadatas=[doc["metadata"] for doc in documents])
-        
-        # Create vector store
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vectorstore = FAISS.from_documents(texts, embeddings)
-        
-        # Create retriever
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-        
-        return retriever
-    except Exception as e:
-        st.error(f"Error initializing RAG system: {e}")
-        return None
-
-# Load evaluation metrics
-@st.cache_data
-def load_evaluation_metrics():
-    try:
-        # Create an evaluator and run evaluation to get metrics
-        engine = load_recommendation_engine()
-        if engine:
-            evaluator = RecommendationEvaluator(engine=engine)
-            metrics = evaluator.run_evaluation(num_recommendations=10)
-            return metrics
-        return None
-    except Exception as e:
-        st.error(f"Error loading evaluation metrics: {str(e)}")
-        return None
+    """Initialize the RAG system or retrieve it from session state"""
+    if "rag_system" not in st.session_state:
+        with st.spinner("Initializing RAG system..."):
+            try:
+                with open("data/assessments.json", "r") as f:
+                    assessments = json.load(f)
+                
+                documents = []
+                for assessment in assessments:
+                    content = (
+                        f"Assessment: {assessment['name']}\n"
+                        f"Description: {assessment.get('description', 'No description available')}\n"
+                        f"Test Types: {', '.join(assessment.get('test_type', ['Unknown']))}\n"
+                        f"Duration: {assessment.get('duration', 'Unknown')}\n"
+                        f"Remote Testing: {'Yes' if assessment.get('remote_testing', False) else 'No'}\n"
+                        f"Adaptive/IRT Testing: {'Yes' if assessment.get('adaptive_irt', False) else 'No'}\n"
+                        f"URL: {assessment.get('url', '#')}\n"
+                    )
+                    documents.append({"content": content, "metadata": {"name": assessment['name'], "url": assessment.get('url', '#')}})
+                
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+                texts = text_splitter.create_documents([doc["content"] for doc in documents], metadatas=[doc["metadata"] for doc in documents])
+                
+                embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+                vectorstore = FAISS.from_documents(texts, embeddings)
+                
+                retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+                st.session_state.rag_system = retriever
+            except Exception as e:
+                st.error(f"Error initializing RAG system: {e}")
+                return None
+            finally:
+                clear_unused_resources()
+                
+    return st.session_state.rag_system
 
 # Initialize LLM for enhanced recommendations
-@st.cache_resource
 def initialize_llm():
-    try:
-        if not GOOGLE_API_KEY:
+    """Initialize LLM or retrieve it from session state"""
+    if "llm" not in st.session_state:
+        try:
+            if not GOOGLE_API_KEY:
+                return None
+                
+            with st.spinner("Initializing LLM..."):
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-pro",
+                    temperature=0.1,
+                    google_api_key=GOOGLE_API_KEY,
+                    convert_system_message_to_human=True
+                )
+                st.session_state.llm = llm
+        except Exception as e:
+            st.error(f"Error initializing LLM: {e}")
             return None
-            
-        # Updated to use the correct model name format
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-pro",  # Updated from gemini-pro to gemini-1.5-pro
-            temperature=0.1,
-            google_api_key=GOOGLE_API_KEY,
-            convert_system_message_to_human=True
-        )
-        return llm
-    except Exception as e:
-        st.error(f"Error initializing LLM: {e}")
-        return None
+        finally:
+            clear_unused_resources()
+    
+    return st.session_state.llm
+
+
+def load_evaluation_metrics():
+    if "evaluation_metrics" not in st.session_state:
+        try:
+            with st.spinner("Loading evaluation metrics..."):
+                engine = load_recommendation_engine()
+                if engine:
+                    evaluator = RecommendationEvaluator(engine=engine)
+                    metrics = evaluator.run_evaluation(num_recommendations=10)
+                    st.session_state.evaluation_metrics = metrics
+                else:
+                    return None
+        except Exception as e:
+            st.error(f"Error loading evaluation metrics: {str(e)}")
+            return None
+        finally:
+            clear_unused_resources()
+    
+    return st.session_state.evaluation_metrics
 
 def generate_enhanced_recommendations(query, basic_recommendations, retriever, llm):
-    """Generate enhanced recommendations using RAG and GenAI"""
     if not llm or not retriever:
         return basic_recommendations, None
         
     try:
-        # Create a template for the LLM to follow
         template = """
         You are a specialized AI assistant for SHL assessments and testing solutions. Your task is to recommend the best SHL assessments based on the user's query or job description.
         
@@ -197,10 +197,8 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
         # Format basic recommendations for LLM
         basic_recs_text = "\n".join([f"- {rec['name']} ({', '.join(rec.get('test_type', ['Unknown']))}, Duration: {rec.get('duration', 'Unknown')}, Remote: {'Yes' if rec.get('remote_testing', False) else 'No'})" for rec in basic_recommendations])
         
-        # Create prompt
         prompt = ChatPromptTemplate.from_template(template)
         
-        # Create chain
         chain = (
             {"query": RunnablePassthrough(), "context": lambda x: context, "basic_recommendations": lambda x: basic_recs_text}
             | prompt
@@ -208,10 +206,8 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
             | StrOutputParser()
         )
         
-        # Run chain
         response = chain.invoke(query)
         
-        # Parse the response to extract the sections
         analysis = ""
         recommendations_text = ""
         constraints = ""
@@ -225,7 +221,7 @@ def generate_enhanced_recommendations(query, basic_recommendations, retriever, l
         if "<constraints>" in response and "</constraints>" in response:
             constraints = response.split("<constraints>")[1].split("</constraints>")[0].strip()
         
-        # Create a combined insights object
+        
         insights = {
             "analysis": analysis,
             "recommendations_explanation": recommendations_text,
@@ -244,7 +240,6 @@ def display_recommendations(recommendations, insights=None):
         st.warning("No relevant assessments found. Please try a different query.")
         return
     
-    # Display insights if available
     if insights:
         with st.container():
             st.markdown("### Analysis")
@@ -257,10 +252,9 @@ def display_recommendations(recommendations, insights=None):
     
     st.success(f"Found {len(recommendations)} relevant assessments")
     
-    # Create table
     df = pd.DataFrame(recommendations)
     
-    # Reorder and rename columns for better display
+    
     cols_to_show = ['name', 'remote_testing', 'adaptive_irt', 'duration', 'test_type']
     renamed_cols = {
         'name': 'Assessment Name', 
@@ -270,30 +264,24 @@ def display_recommendations(recommendations, insights=None):
         'test_type': 'Test Type'
     }
     
-    # Make sure all required columns exist
     for col in cols_to_show:
         if col not in df.columns:
             df[col] = "N/A"
     
-    # Create subset with only the columns we want to show
     df_display = df[cols_to_show].rename(columns=renamed_cols)
     
-    # Create clickable links for assessment names
     df_display['Assessment Name'] = df.apply(
         lambda x: f"<a href='{x.get('url', '#')}' target='_blank'>{x['name']}</a>", 
         axis=1
     )
     
-    # Display the dataframe with clickable links
     st.write(df_display.to_html(escape=False, index=False), unsafe_allow_html=True)
     
-    # Explanation section with more details
     if insights and insights.get("recommendations_explanation"):
         with st.expander("Why these assessments were recommended", expanded=True):
             st.markdown(insights["recommendations_explanation"])
 
 def display_system_evaluation():
-    """Display system evaluation metrics and interpretation"""
     st.markdown("## System Performance Metrics")
     
     metrics = load_evaluation_metrics()
@@ -301,13 +289,11 @@ def display_system_evaluation():
         st.warning("Evaluation metrics are not available.")
         return
         
-    # Create two columns for metrics display
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("### Relevance Metrics")
         
-        # Create a metrics dataframe
         metrics_data = {
             "Metric": ["Type Relevance", "Keyword Relevance", "Constraint Satisfaction", "Overall Score"],
             "Value": [
@@ -324,14 +310,11 @@ def display_system_evaluation():
             ]
         }
         
-        # Display metrics table
         st.table(pd.DataFrame(metrics_data))
         
-        # Create and display bar chart
         fig, ax = plt.subplots(figsize=(10, 6))
         bars = ax.bar(metrics_data["Metric"], [float(x) for x in metrics_data["Value"]])
         
-        # Color the bars based on interpretation
         colors = ['#ff9999' if x == "Low" else '#ffcc99' if x == "Moderate" else '#99ff99' for x in metrics_data["Interpretation"]]
         for bar, color in zip(bars, colors):
             bar.set_color(color)
@@ -342,19 +325,15 @@ def display_system_evaluation():
         ax.set_title('Recommendation System Relevance Metrics')
         plt.xticks(rotation=45)
         plt.tight_layout()
-        
-        # Display the plot
         st.pyplot(fig)
     
     with col2:
         st.markdown("### Ranking Metrics")
         
-        # Extract K values and corresponding metrics
         k_values = sorted(list(metrics["mean_recall_at_k"].keys()))
         mean_recall = [metrics["mean_recall_at_k"][k] for k in k_values]
         mean_ap = [metrics["mean_ap_at_k"][k] for k in k_values]
         
-        # Create ranking metrics dataframe
         ranking_data = {
             "K Value": k_values,
             "Mean Recall@K": [f"{val:.2f}" for val in mean_recall],
@@ -366,20 +345,16 @@ def display_system_evaluation():
             ]
         }
         
-        # Display ranking metrics table
         st.table(pd.DataFrame(ranking_data))
         
-        # Create and display bar chart for ranking metrics
         fig, ax = plt.subplots(figsize=(10, 6))
         
         x = np.arange(len(k_values))
         width = 0.35
         
-        # Plot bars
         recall_bars = ax.bar(x - width/2, mean_recall, width, label='Mean Recall@K')
         map_bars = ax.bar(x + width/2, mean_ap, width, label='MAP@K')
         
-        # Color bars based on values
         recall_colors = ['#ff9999' if val < 0.3 else '#ffcc99' if val < 0.7 else '#99ff99' for val in mean_recall]
         map_colors = ['#ff9999' if val < 0.3 else '#ffcc99' if val < 0.7 else '#99ff99' for val in mean_ap]
         
@@ -398,8 +373,6 @@ def display_system_evaluation():
         ax.legend()
         
         plt.tight_layout()
-        
-        # Display the plot
         st.pyplot(fig)
     
     st.markdown("### Interpretation of Evaluation Results")
@@ -419,7 +392,6 @@ def display_system_evaluation():
     """)
 
 def main():
-    # Header
     st.title("SHL Assessment Recommendation System with RAG and GenAI")
     st.markdown("""
     This system uses Retrieval-Augmented Generation and Generative AI to recommend SHL assessments 
@@ -428,8 +400,11 @@ def main():
     Enter your query or job description below, or provide a URL to a job description.
     """)
     
-    # Sidebar information
     with st.sidebar:
+        if st.button("Reset System"):
+            st.session_state.clear()
+            st.rerun()
+            
         st.header("About")
         st.markdown("""
         This system uses Retrieval-Augmented Generation (RAG) and Generative AI to recommend SHL assessments that best match your needs.
